@@ -12,7 +12,16 @@ CORS(app)
 
 @app.route('/')
 def home():
-    return redirect("https://cyberboysumanjay.github.io/JioSaavnAPI/")
+    return jsonify({
+        "message": "Welcome to JioSaavn API",
+        "endpoints": {
+            "/song?query=<song_name>": "Get song URL",
+            "/playlist?query=<playlist_name>": "Get playlist songs",
+            "/album?query=<album_name>": "Get album songs",
+            "/lyrics?query=<song_name>": "Get lyrics"
+        }
+    })
+
 
 
 @app.route('/song/')
