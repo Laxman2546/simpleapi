@@ -13,7 +13,7 @@ CORS(app)
 @app.route('/')
 def home():
     return jsonify({
-        "message": "Welcome to JioSaavn API",
+        "message": "Welcome to NaniMusic API",
         "endpoints": {
             "/song?query=<song_name>": "Get song URL",
             "/playlist?query=<playlist_name>": "Get playlist songs",
