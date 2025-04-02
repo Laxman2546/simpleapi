@@ -716,44 +716,99 @@ def result():
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 40, type=int)
     
-    # For initial requests, get more results than needed for pagination
-    initial_limit = 200  # Get a larger batch of results initially
+    # Implement lazy loading - only fetch what we need
+    # for the current page (plus a small buffer)
+    fetch_limit = per_page * 2  # Fetch 2 pages worth for smoother experience
     
     if lyrics_ and lyrics_.lower() != 'false':
         lyrics = True
+    
+    # Early return for empty queries
+    if not query:
+        return jsonify({"status": "error", "message": "No query provided"})
         
-    if 'saavn' not in query:
-        # Check if we need to fetch from API or use cached results
-        # This is a placeholder - you would implement caching separately
-        all_results = jiosaavn.search_for_song(query, lyrics, True, limit=initial_limit)
+    # Handle direct song URLs more efficiently
+    if 'saavn' in query and query.startswith('http'):
+        try:
+            song = jiosaavn.search_for_song(query, lyrics, True, limit=1, timeout=5)
+            return jsonify({
+                "status": "success",
+                "results": song,
+                "pagination": {
+                    "page": 1,
+                    "per_page": 1,
+                    "total": len(song),
+                    "pages": 1,
+                    "has_more": False
+                }
+            })
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)})
+    
+    # For search queries, implement caching to avoid repeated API calls
+    cache_key = f"{query}_{lyrics}_{page}_{per_page}"
+    cached_results = get_from_cache(cache_key)  # Implement this function
+    
+    if cached_results:
+        return jsonify(cached_results)
+    
+    try:
+        # Calculate what results we need based on page
+        fetch_offset = (page - 1) * per_page
+        
+        # For first page or if we need more results
+        results = jiosaavn.search_for_song(
+            query, 
+            lyrics, 
+            True, 
+            limit=fetch_limit,
+            timeout=5  # Set a reasonable timeout
+        )
         
         # Calculate pagination
-        start_idx = (page - 1) * per_page
-        end_idx = min(start_idx + per_page, len(all_results))
+        start_idx = 0
+        end_idx = min(per_page, len(results))
         
-        # If we might need more results than we have, and we didn't hit the API's limit
-        if end_idx >= len(all_results) and len(all_results) == initial_limit:
-            # We could implement fetching more results here
-            pass
+        paginated_results = results[start_idx:end_idx]
         
-        # Get current page of results
-        paginated_results = all_results[start_idx:end_idx]
+        # Calculate if there might be more results
+        # This is an estimate since we don't know the total without fetching everything
+        estimated_total = len(results) if len(results) < fetch_limit else fetch_limit * 2
         
-        # Create response with pagination metadata
         response = {
             "status": "success",
             "results": paginated_results,
             "pagination": {
                 "page": page,
                 "per_page": per_page,
-                "total": len(all_results),
-                "pages": (len(all_results) + per_page - 1) // per_page,
-                "has_more": end_idx < len(all_results)
+                "total": estimated_total,
+                "pages": (estimated_total + per_page - 1) // per_page,
+                "has_more": len(results) >= fetch_limit
             }
         }
         
+        # Cache the results
+        store_in_cache(cache_key, response)  # Implement this function
+        
         return jsonify(response)
-    
+    except requests.exceptions.Timeout:
+        return jsonify({
+            "status": "error", 
+            "message": "Search timed out. Please try a more specific query."
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
+# Implement these cache functions
+def get_from_cache(key):
+    # Use a simple in-memory cache, Redis, or another caching solution
+    # This is a placeholder - implement according to your needs
+    return None
+
+def store_in_cache(key, data, expiry=300):  # Cache for 5 minutes
+    # Store results in cache
+    # This is a placeholder - implement according to your needs
+    pass
     # Rest of your code for handling specific URLs...
 
 if __name__ == '__main__':
