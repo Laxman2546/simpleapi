@@ -36,23 +36,23 @@ def home():
             "/queue/status": "Get queue status"
         }
     })
-def clean_jsonp(response_text):
-    """Clean JSONP response to extract pure JSON"""
-    try:
-        # Remove JSONP wrapper and callback function
-        cleaned = re.sub(r'^[^{]*', '', response_text)
-        cleaned = re.sub(r'[^}]*$', '', cleaned)
-        return json.loads(cleaned)
-    except Exception as e:
-        print(f"Error cleaning JSONP: {e}")
-        return None
+# def clean_jsonp(response_text):
+#     """Clean JSONP response to extract pure JSON"""
+#     try:
+#         # Remove JSONP wrapper and callback function
+#         cleaned = re.sub(r'^[^{]*', '', response_text)
+#         cleaned = re.sub(r'[^}]*$', '', cleaned)
+#         return json.loads(cleaned)
+#     except Exception as e:
+#         print(f"Error cleaning JSONP: {e}")
+#         return None
 @app.route('/homepage')
 def get_jiosaavn_homepage_data():
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
     
-    url = "https://www.jiosaavn.com/api.php?__call=webapi.getBrowseHoverDetails&is_entity_page=false&language=telugu&api_version=4&_format=json&_marker=0"
+    url = "https://www.jiosaavn.com/api.php?_format=json&__call=webapi.getLaunchData"
     
 
     try:
@@ -64,151 +64,7 @@ def get_jiosaavn_homepage_data():
             return jsonify({"error": "Failed to fetch homepage data", "status_code": response.status_code}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-@app.route('/homepage/telugu')
-def get_telugu_homepage():
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-        "Accept-Language": "te-IN,te;q=0.9",
-        "X-Requested-With": "XMLHttpRequest",
-        "Referer": "https://www.jiosaavn.com/",
-        "Cookie": "L=telugu"
-    }
-    
-    # Use the same endpoint that's working for telugu/content
-    url = "https://www.jiosaavn.com/api.php?__call=content.getHomepageData&language=telugu&_format=json&_marker=0"
-    
-    try:
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code == 200:
-            try:
-                raw_data = response.json()
-            except json.JSONDecodeError:
-                raw_data = clean_jsonp(response.text)
-                if not raw_data:
-                    return jsonify({"error": "Failed to parse Telugu homepage data"}), 500
-            
-            # Process the data into our desired format
-            telugu_data = {
-                "banners": [],
-                "trending_songs": [],
-                "new_releases": [],
-                "featured_playlists": [],
-                "radio_stations": []
-            }
-            
-            # Extract new releases (albums)
-            if "new_albums" in raw_data and isinstance(raw_data["new_albums"], list):
-                for album in raw_data["new_albums"]:
-                    if isinstance(album, dict):
-                        artists = []
-                        if "Artist" in album and "music" in album["Artist"]:
-                            for artist in album["Artist"]["music"]:
-                                if isinstance(artist, dict):
-                                    artists.append(artist.get("name", ""))
-                        
-                        artist_name = ", ".join(artists) if artists else ""
-                        
-                        telugu_data["new_releases"].append({
-                            "id": album.get("albumid", ""),
-                            "title": album.get("title", ""),
-                            "artist": artist_name,
-                            "image": album.get("image", "").replace("150x150", "500x500") if album.get("image") else "",
-                            "url": f"https://www.jiosaavn.com/album/{album.get('query', '').replace(' ', '-')}/{album.get('albumid', '')}",
-                            "language": album.get("language", "telugu")
-                        })
-            
-            # Extract trending playlists if available
-            if "top_playlists" in raw_data and isinstance(raw_data["top_playlists"], list):
-                for playlist in raw_data["top_playlists"]:
-                    if isinstance(playlist, dict):
-                        telugu_data["featured_playlists"].append({
-                            "id": playlist.get("id", ""),
-                            "title": playlist.get("title", playlist.get("listname", "")),
-                            "image": playlist.get("image", "").replace("150x150", "500x500") if playlist.get("image") else "",
-                            "url": playlist.get("perma_url", "")
-                        })
-            
-            # Extract top songs if available
-            if "top_playlists" in raw_data and isinstance(raw_data["top_playlists"], list):
-                for playlist in raw_data["top_playlists"]:
-                    if isinstance(playlist, dict) and playlist.get("title") == "Weekly Top Songs" and "songs" in playlist:
-                        for song in playlist.get("songs", []):
-                            if isinstance(song, dict):
-                                telugu_data["trending_songs"].append({
-                                    "id": song.get("id", ""),
-                                    "title": song.get("title", ""),
-                                    "artist": song.get("artist", song.get("primary_artists", "")),
-                                    "image": song.get("image", "").replace("150x150", "500x500") if song.get("image") else "",
-                                    "url": song.get("perma_url", ""),
-                                    "language": "telugu"
-                                })
-                        break
-            
-            # Get charts if available
-            if "charts" in raw_data and isinstance(raw_data["charts"], list):
-                for chart in raw_data["charts"]:
-                    if isinstance(chart, dict) and "songs" in chart and isinstance(chart["songs"], list):
-                        for song in chart["songs"]:
-                            if isinstance(song, dict) and song not in telugu_data["trending_songs"]:
-                                telugu_data["trending_songs"].append({
-                                    "id": song.get("id", ""),
-                                    "title": song.get("title", ""),
-                                    "artist": song.get("artist", song.get("primary_artists", "")),
-                                    "image": song.get("image", "").replace("150x150", "500x500") if song.get("image") else "",
-                                    "url": song.get("perma_url", ""),
-                                    "language": "telugu"
-                                })
-            
-            # Add featured radio stations
-            if "radio_stations" in raw_data and isinstance(raw_data["radio_stations"], list):
-                for station in raw_data["radio_stations"]:
-                    if isinstance(station, dict):
-                        telugu_data["radio_stations"].append({
-                            "id": station.get("id", ""),
-                            "title": station.get("title", ""),
-                            "image": station.get("image", ""),
-                            "url": station.get("perma_url", "")
-                        })
-            
-            # Add a more focused way to get Telugu songs
-            @app.route('/telugu/top-songs')
-            def get_telugu_top_songs():
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-                    "Accept-Language": "te-IN,te;q=0.9",
-                    "X-Requested-With": "XMLHttpRequest",
-                    "Referer": "https://www.jiosaavn.com/",
-                    "Cookie": "L=telugu"
-                }
-                
-                # This URL specifically gets Telugu top songs
-                url = "https://www.jiosaavn.com/api.php?__call=content.getCharts&language=telugu&_format=json"
-                
-                try:
-                    response = requests.get(url, headers=headers)
-                    if response.status_code == 200:
-                        try:
-                            data = response.json()
-                        except json.JSONDecodeError:
-                            data = clean_jsonp(response.text)
-                        
-                        return jsonify(data)
-                    else:
-                        return jsonify({"error": "Failed to fetch Telugu top songs"}), 500
-                except Exception as e:
-                    return jsonify({"error": str(e)}), 500
-            
-            return jsonify(telugu_data)
-        else:
-            return jsonify({"error": f"Telugu homepage request failed with status code: {response.status_code}"}), 500
-    except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        print(error_details)
-        return jsonify({"error": str(e), "traceback": error_details}), 500
 
-# Alternative approach using a different API endpoint that might work better for Telugu content
 @app.route('/telugu/content')
 def get_telugu_content():
     headers = {
@@ -270,7 +126,67 @@ def get_telugu_new():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/combined')
+def get_combined_homepage():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.5"
+    }
+    
+    telugu_headers = {
+        **headers,
+        "Accept-Language": "te-IN,te;q=0.9",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://www.jiosaavn.com/",
+        "Cookie": "L=telugu"
+    }
 
+    try:
+        # Make both API calls concurrently
+        with requests.Session() as session:
+            # General homepage data
+            telugu_url = "https://www.jiosaavn.com/api.php?__call=content.getHomepageData&language=telugu&_format=json&_marker=0"
+            telugu_request = session.get(telugu_url, headers=telugu_headers)
+
+            general_url = "https://www.jiosaavn.com/api.php?_format=json&__call=webapi.getLaunchData"
+            general_request = session.get(general_url, headers=headers)
+            
+            # Telugu-specific content
+            
+            # Process responses
+            telugu_data = clean_json_response(telugu_request)
+            general_data = clean_json_response(general_request)
+
+            # Combine the responses
+            combined_data = {
+                "status": "success",
+                "telugu": telugu_data,
+                "general": general_data,
+            }
+            
+            return jsonify(combined_data)
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+def clean_json_response(response):
+    """Handle both JSON and JSONP responses"""
+    if response.status_code != 200:
+        return None
+        
+    try:
+        # Try regular JSON first
+        return response.json()
+    except ValueError:
+        try:
+            # Try cleaning JSONP response
+            json_str = response.text.strip('()\n')
+            return json.loads(json_str)
+        except:
+            return None
 @app.route("/telugu/charts")
 def telugu_charts():
     headers = {
@@ -420,6 +336,92 @@ def search_and_queue():
     
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+@app.route('/album/details')
+def get_album_details():
+    album_id = request.args.get('id')
+    if not album_id:
+        return jsonify({"error": "Album ID is required", "status": False}), 400
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+    }
+
+    try:
+        # Fetch album details using the correct endpoint
+        album_details_base_url = "https://www.jiosaavn.com/api.php?__call=content.getAlbumDetails&_format=json&cc=in&_marker=0%3F_marker%3D0&albumid="
+        response = requests.get(f"{album_details_base_url}{album_id}", headers=headers)
+
+        if response.status_code == 200:
+            # Handle JSONP response
+            json_str = response.text.strip('()\n')
+            data = json.loads(json_str)
+
+            # Extract album information
+            album_data = {
+                "id": data.get("id", album_id),
+                "title": data.get("title", ""),
+                "primary_artists": data.get("primary_artists", ""),
+                "image": data.get("image", "").replace("150x150", "500x500"),
+                "release_date": data.get("release_date", ""),
+                "song_count": data.get("song_count", "0"),
+                "label": data.get("label", ""),
+                "songs": []
+            }
+
+            # Process songs
+            for song in data.get("songs", []):
+                song_data = {
+                    "id": song.get("id"),
+                    "title": song.get("title", ""),
+                    "duration": song.get("duration", "0"),
+                    "primary_artists": song.get("primary_artists", ""),
+                    "image": song.get("image", "").replace("150x150", "500x500"),
+                    "media_url": decrypt_url(song.get("encrypted_media_url", "")),
+                    "media_preview_url": song.get("media_preview_url", ""),
+                    "perma_url": song.get("perma_url", "")
+                }
+                album_data["songs"].append(song_data)
+
+            return jsonify({
+                "status": True,
+                "data": album_data
+            })
+
+        else:
+            return jsonify({
+                "status": False,
+                "error": f"Album not found (HTTP {response.status_code})"
+            }), 404
+
+    except json.JSONDecodeError:
+        return jsonify({
+            "status": False,
+            "error": "Invalid response from JioSaavn API"
+        }), 502
+        
+    except Exception as e:
+        return jsonify({
+            "status": False,
+            "error": str(e)
+        }), 500
+
+def decrypt_url(encrypted_url):
+    """Decrypt JioSaavn media URL using DES"""
+    if not encrypted_url:
+        return ""
+
+    try:
+        from pyDes import des, ECB, PAD_PKCS5
+        import base64
+
+        des_cipher = des(b"38346591", ECB, b"\0\0\0\0\0\0\0\0", pad=None, padmode=PAD_PKCS5)
+        enc_url = base64.b64decode(encrypted_url.strip())
+        dec_url = des_cipher.decrypt(enc_url, padmode=PAD_PKCS5).decode('utf-8')
+        return dec_url.replace("_96.mp4", "_320.mp4")
+    except Exception:
+        return ""
 def get_related_songs(song_id):
     """Fetch related songs from JioSaavn"""
     try:
@@ -609,38 +611,194 @@ def lyrics():
             "error": 'Query containing song link or id is required to fetch lyrics!'
         }
         return jsonify(error)
+@app.route('/search/songs')
+def search_all_songs():
+    query = request.args.get('query')
+    if not query:
+        return jsonify({
+            "status": False,
+            "error": "Search query is required"
+        }), 400
 
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+    }
+
+    try:
+        # Initial search request
+        search_base_url = "https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&cc=in&includeMetaTags=1&query="
+        response = requests.get(f"{search_base_url}{query}", headers=headers)
+
+        if response.status_code == 200:
+            # Clean JSONP response
+            json_str = response.text.strip('()\n')
+            data = json.loads(json_str)
+
+            # Get all songs from initial response
+            songs = []
+            for song in data.get("songs", {}).get("data", []):
+                songs.append(process_song(song))
+
+            # Check if there are more results available
+            if data.get("songs", {}).get("total", 0) > len(songs):
+                # Use the more comprehensive search endpoint for additional results
+                extended_url = f"https://www.jiosaavn.com/api.php?__call=search.getResults&q={query}&_format=json&_marker=0"
+                ext_response = requests.get(extended_url, headers=headers)
+                
+                if ext_response.status_code == 200:
+                    ext_data = json.loads(ext_response.text.strip('()\n'))
+                    for item in ext_data.get("results", []):
+                        if item.get("type") == "song":
+                            songs.append(process_song(item))
+
+            return jsonify({
+                "status": True,
+                "query": query,
+                "total_songs": len(songs),
+                "songs": songs
+            })
+
+        else:
+            return jsonify({
+                "status": False,
+                "error": f"Search failed (HTTP {response.status_code})"
+            }), response.status_code
+
+    except json.JSONDecodeError:
+        return jsonify({
+            "status": False,
+            "error": "Invalid response from JioSaavn"
+        }), 502
+        
+    except Exception as e:
+        return jsonify({
+            "status": False,
+            "error": str(e)
+        }), 500
+
+def process_song(song_data):
+    """Helper function to process song data"""
+    return {
+        "id": song_data.get("id"),
+        "title": song_data.get("title", ""),
+        "artists": song_data.get("primary_artists", ""),
+        "album": song_data.get("album", ""),
+        "image": song_data.get("image", "").replace("150x150", "500x500"),
+        "duration": song_data.get("duration", "0"),
+        "media_url": decrypt_url(song_data.get("encrypted_media_url", "")),
+        "perma_url": song_data.get("perma_url", ""),
+        "language": song_data.get("language", "")
+    }
+
+def decrypt_url(encrypted_url):
+    """Decrypt JioSaavn media URLs"""
+    if not encrypted_url:
+        return ""
+    
+    try:
+        from pyDes import des, ECB, PAD_PKCS5
+        import base64
+        
+        des_cipher = des(b"38346591", ECB, b"\0\0\0\0\0\0\0\0", pad=None, padmode=PAD_PKCS5)
+        enc_url = base64.b64decode(encrypted_url.strip())
+        dec_url = des_cipher.decrypt(enc_url, padmode=PAD_PKCS5).decode('utf-8')
+        return dec_url.replace("_96.mp4", "_320.mp4")
+    except Exception:
+        return ""
 @app.route('/result/')
 def result():
-    lyrics = False
-    query = request.args.get('query')
-    lyrics_ = request.args.get('lyrics')
-    if lyrics_ and lyrics_.lower() != 'false':
-        lyrics = True
-
-    if 'saavn' not in query:
-        return jsonify(jiosaavn.search_for_song(query, lyrics, True))
     try:
-        if '/song/' in query:
-            song_id = jiosaavn.get_song_id(query)
-            song = jiosaavn.get_song(song_id, lyrics)
-            return jsonify(song)
-        elif '/album/' in query:
-            id = jiosaavn.get_album_id(query)
-            songs = jiosaavn.get_album(id, lyrics)
-            return jsonify(songs)
-        elif '/playlist/' in query or '/featured/' in query:
-            id = jiosaavn.get_playlist_id(query)
-            songs = jiosaavn.get_playlist(id, lyrics)
-            return jsonify(songs)
+        lyrics = False
+        query = request.args.get('query', '')
+        lyrics_ = request.args.get('lyrics', 'false')
+        
+        # Pagination parameters
+        page = request.args.get('page', 1)
+        per_page = request.args.get('per_page', 40)
+        
+        # Validate and convert parameters to correct types
+        try:
+            page = int(page)
+            per_page = int(per_page)
+            
+            # Ensure reasonable values
+            page = max(1, page)
+            per_page = max(1, min(100, per_page))  # Limit to reasonable range
+        except ValueError:
+            page = 1
+            per_page = 40
+        
+        if lyrics_ and str(lyrics_).lower() != 'false':
+            lyrics = True
+            
+        # Early validation of query
+        if not query or not isinstance(query, str) or len(query.strip()) == 0:
+            return jsonify({
+                "status": "error", 
+                "message": "No query provided"
+            })
+            
+        # Handle timeouts more effectively
+        try:
+            fetch_limit = per_page * 2  # Get a bit more than needed
+            
+            # Wrap the call in a try-except block specifically for timeout
+            results = jiosaavn.search_for_song(
+                query, 
+                lyrics, 
+                True, 
+                limit=fetch_limit,
+                timeout=8  # Slightly longer timeout for API calls
+            )
+            
+            # Guard against None results
+            if results is None:
+                results = []
+                
+            # Calculate pagination
+            total_items = len(results)
+            total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 1
+            
+            # Calculate slice indices
+            start_idx = (page - 1) * per_page
+            end_idx = min(start_idx + per_page, total_items)
+            
+            # Get page of results safely
+            if start_idx >= total_items:
+                paginated_results = []
+            else:
+                paginated_results = results[start_idx:end_idx]
+            
+            response = {
+                "status": "success",
+                "results": paginated_results,
+                "pagination": {
+                    "page": page,
+                    "per_page": per_page,
+                    "total": total_items,
+                    "pages": total_pages,
+                    "has_more": end_idx < total_items
+                }
+            }
+            
+            return jsonify(response)
+            
+        except requests.exceptions.Timeout:
+            return jsonify({
+                "status": "error", 
+                "message": "Search timed out. Please try a more specific query."
+            })
+            
     except Exception as e:
-        print_exc()
-        error = {
-            "status": True,
-            "error": str(e)
-        }
-        return jsonify(error)
-    return None
-
+        # Catch-all handler for any other exceptions
+        import traceback
+        print(f"Error in /result/ endpoint: {str(e)}")
+        print(traceback.format_exc())
+        
+        return jsonify({
+            "status": "error",
+            "message": "An unexpected error occurred. Please try again."
+        })
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5100, debug=True, use_reloader=True, threaded=True)
