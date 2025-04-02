@@ -706,43 +706,215 @@ def decrypt_url(encrypted_url):
         return dec_url.replace("_96.mp4", "_320.mp4")
     except Exception:
         return ""
-@app.route('/result/')
-def result():
-    lyrics = False
+    
+@app.route('/search/songs')
+def search_songs():
     query = request.args.get('query')
-    lyrics_ = request.args.get('lyrics')
-    if lyrics_ and lyrics_.lower() != 'false':
-        lyrics = True
+    page = request.args.get('page', 1, type=int)
+    limit = request.args.get('limit', 20, type=int)
+    lyrics = request.args.get('lyrics', 'false').lower() == 'true'
+    
+    if not query:
+        return jsonify({
+            "status": False,
+            "error": "Search query is required"
+        }), 400
 
-    if 'saavn' not in query:
-        return jsonify(jiosaavn.search_for_song(query, lyrics, True))
     try:
-        if '/song/' in query:
-            print("Song")
-            song_id = jiosaavn.get_song_id(query)
-            song = jiosaavn.get_song(song_id, lyrics)
-            return jsonify(song)
-
-        elif '/album/' in query:
-            print("Album")
-            id = jiosaavn.get_album_id(query)
-            songs = jiosaavn.get_album(id, lyrics)
-            return jsonify(songs)
-
-        elif '/playlist/' or '/featured/' in query:
-            print("Playlist")
-            id = jiosaavn.get_playlist_id(query)
-            songs = jiosaavn.get_playlist(id, lyrics)
-            return jsonify(songs)
+        # First search with the autocomplete endpoint
+        search_url = f"{endpoints.search_base_url}{query}"
+        response = requests.get(search_url).text.encode().decode('unicode-escape')
+        
+        # Clean the response
+        pattern = r'\(From "([^"]+)"\)'
+        cleaned_response = re.sub(pattern, r"(From '\1')", response)
+        data = json.loads(cleaned_response)
+        
+        songs = []
+        song_ids = set()
+        
+        # Process initial results
+        for song in data['songs']['data']:
+            if song['id'] not in song_ids:
+                song_data = get_song(song['id'], lyrics)
+                if song_data:
+                    songs.append(song_data)
+                    song_ids.add(song['id'])
+        
+        # If we need more results, use pagination
+        if len(songs) < limit and 'pagination' in data['songs']:
+            total_pages = data['songs']['pagination']['totalPages']
+            current_page = 2  # We already got page 1
+            
+            while len(songs) < limit and current_page <= total_pages:
+                paginated_url = f"{endpoints.search_base_url}{query}&p={current_page}"
+                page_response = requests.get(paginated_url).text.encode().decode('unicode-escape')
+                page_data = json.loads(re.sub(pattern, r"(From '\1')", page_response))
+                
+                for song in page_data['songs']['data']:
+                    if song['id'] not in song_ids:
+                        song_data = get_song(song['id'], lyrics)
+                        if song_data:
+                            songs.append(song_data)
+                            song_ids.add(song['id'])
+                
+                current_page += 1
+        
+        return jsonify({
+            "status": True,
+            "query": query,
+            "page": page,
+            "limit": limit,
+            "total_results": len(songs),
+            "songs": songs[(page-1)*limit : page*limit]
+        })
 
     except Exception as e:
-        print_exc()
-        error = {
-            "status": True,
+        return jsonify({
+            "status": False,
             "error": str(e)
-        }
-        return jsonify(error)
-    return None
+        }), 500
+
+# Your existing helper functions
+def get_song(id, lyrics=False):
+    try:
+        song_url = f"{endpoints.song_details_base_url}{id}"
+        response = requests.get(song_url).text.encode().decode('unicode-escape')
+        song_data = json.loads(response)
+        return format_song(song_data[id], lyrics)
+    except:
+        return None
+
+def format_song(data, lyrics):
+    """Format song data with decrypted URLs"""
+    try:
+        data['media_url'] = decrypt_url(data['encrypted_media_url'])
+        if data['320kbps'] != "true":
+            data['media_url'] = data['media_url'].replace("_320.mp4", "_160.mp4")
+    except:
+        url = data['media_preview_url']
+        url = url.replace("preview", "aac")
+        if data['320kbps'] == "true":
+            url = url.replace("_96_p.mp4", "_320.mp4")
+        else:
+            url = url.replace("_96_p.mp4", "_160.mp4")
+        data['media_url'] = url
+    
+    data['image'] = data['image'].replace("150x150", "500x500")
+    
+    if lyrics and data['has_lyrics'] == 'true':
+        data['lyrics'] = get_lyrics(data['id'])
+    else:
+        data['lyrics'] = None
+    
+    return data
+
+def decrypt_url(encrypted_url):
+    """Decrypt JioSaavn media URLs"""
+    if not encrypted_url:
+        return ""
+    try:
+        des_cipher = des(b"38346591", ECB, b"\0\0\0\0\0\0\0\0", pad=None, padmode=PAD_PKCS5)
+        enc_url = base64.b64decode(encrypted_url.strip())
+        dec_url = des_cipher.decrypt(enc_url, padmode=PAD_PKCS5).decode('utf-8')
+        return dec_url.replace("_96.mp4", "_320.mp4")
+    except:
+        return ""
+
+@app.route('/result/')
+def result():
+    try:
+        lyrics = False
+        query = request.args.get('query', '')
+        lyrics_ = request.args.get('lyrics', 'false')
+        
+        # Pagination parameters
+        page = request.args.get('page', 1)
+        per_page = request.args.get('per_page', 40)
+        
+        # Validate and convert parameters to correct types
+        try:
+            page = int(page)
+            per_page = int(per_page)
+            
+            # Ensure reasonable values
+            page = max(1, page)
+            per_page = max(1, min(100, per_page))  # Limit to reasonable range
+        except ValueError:
+            page = 1
+            per_page = 40
+        
+        if lyrics_ and str(lyrics_).lower() != 'false':
+            lyrics = True
+            
+        # Early validation of query
+        if not query or not isinstance(query, str) or len(query.strip()) == 0:
+            return jsonify({
+                "status": "error", 
+                "message": "No query provided"
+            })
+            
+        # Handle timeouts more effectively
+        try:
+            fetch_limit = per_page * 2  # Get a bit more than needed
+            
+            # Wrap the call in a try-except block specifically for timeout
+            results = jiosaavn.search_for_song(
+                query, 
+                lyrics, 
+                True, 
+                limit=fetch_limit,
+                timeout=8  # Slightly longer timeout for API calls
+            )
+            
+            # Guard against None results
+            if results is None:
+                results = []
+                
+            # Calculate pagination
+            total_items = len(results)
+            total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 1
+            
+            # Calculate slice indices
+            start_idx = (page - 1) * per_page
+            end_idx = min(start_idx + per_page, total_items)
+            
+            # Get page of results safely
+            if start_idx >= total_items:
+                paginated_results = []
+            else:
+                paginated_results = results[start_idx:end_idx]
+            
+            response = {
+                "status": "success",
+                "results": paginated_results,
+                "pagination": {
+                    "page": page,
+                    "per_page": per_page,
+                    "total": total_items,
+                    "pages": total_pages,
+                    "has_more": end_idx < total_items
+                }
+            }
+            
+            return jsonify(response)
+            
+        except requests.exceptions.Timeout:
+            return jsonify({
+                "status": "error", 
+                "message": "Search timed out. Please try a more specific query."
+            })
+            
+    except Exception as e:
+        # Catch-all handler for any other exceptions
+        import traceback
+        print(f"Error in /result/ endpoint: {str(e)}")
+        print(traceback.format_exc())
+        
+        return jsonify({
+            "status": "error",
+            "message": "An unexpected error occurred. Please try again."
+        })
 
 
 if __name__ == '__main__':
