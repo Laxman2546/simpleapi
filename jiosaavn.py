@@ -8,149 +8,167 @@ import re
 
 def search_for_song(query, lyrics, songdata, limit=50, timeout=3):
     """
-    Parse JioSaavn website search results with improved timeout handling
-    
-    Args:
-        query: Search query or JioSaavn URL
-        lyrics: Whether to fetch lyrics
-        songdata: Whether to fetch full song data
-        limit: Maximum number of results to return
-        timeout: Timeout in seconds for each HTTP request
-    
-    Returns:
-        List of songs matching the query
+    Parse JioSaavn website search results with improved error handling for API use
     """
-    # Handle direct URLs
-    if query.startswith('http') and 'saavn.com' in query:
-        id = get_song_id(query)
-        try:
-            return [get_song(id, lyrics)]
-        except Exception as e:
-            print(f"Error getting song by ID: {e}")
-            return []
-    
-    # Use async requests or at least implement proper timeouts
-    all_songs = []
-    
-    # Define request headers once
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': '*/*',
-        'Referer': 'https://www.jiosaavn.com/',
-    }
-    
-    # Step 1: Try the direct API with proper error handling and timeouts
-    search_urls = [
-        f"https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&q={query}&n={limit}",
-        f"https://www.jiosaavn.com/api.php?__call=search.getAll&_format=json&_marker=0&cc=in&q={query}&n={limit}"
-    ]
-    
-    for url in search_urls:
-        if len(all_songs) >= limit:
-            break
-            
-        try:
-            response = requests.get(url, headers=headers, timeout=timeout)
-            if response.status_code != 200:
-                continue
-                
-            response_text = response.text.encode().decode('unicode-escape')
-            response_json = json.loads(response_text)
-            
-            # Extract songs from different possible response formats
-            song_data = None
-            if 'results' in response_json:
-                song_data = response_json['results']
-            elif 'songs' in response_json and 'data' in response_json['songs']:
-                song_data = response_json['songs']['data']
-            
-            if song_data:
-                # Add songs, avoiding duplicates
-                existing_ids = {song.get('id') for song in all_songs if 'id' in song}
-                for song in song_data:
-                    if 'id' in song and song['id'] not in existing_ids:
-                        all_songs.append(song)
-                        existing_ids.add(song['id'])
-        except requests.exceptions.Timeout:
-            print(f"Timeout on URL: {url}")
-            continue
-        except Exception as e:
-            print(f"Error on URL {url}: {e}")
-            continue
-    
-    # Step 2: If we don't have enough results, try web scraping as fallback
-    # but with a reasonable timeout and only if really needed
-    if len(all_songs) < min(5, limit):
-        try:
-            import re
-            from bs4 import BeautifulSoup
-            
-            formatted_query = query.replace(' ', '+')
-            search_url = f"https://www.jiosaavn.com/search/{formatted_query}/songs"
-            
-            scrape_headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml',
-                'Accept-Language': 'en-US,en;q=0.9',
-            }
-            
-            response = requests.get(search_url, headers=scrape_headers, timeout=timeout)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                script_tags = soup.find_all('script')
-                for script in script_tags:
-                    if script.string and 'window.__INITIAL_DATA__' in script.string:
-                        json_str = re.search(r'window\.__INITIAL_DATA__\s*=\s*({.*?});', script.string, re.DOTALL)
-                        if json_str:
-                            try:
-                                json_data = json.loads(json_str.group(1))
-                                if 'songs' in json_data and 'data' in json_data['songs']:
-                                    # Add these songs, respecting the existing_ids set
-                                    existing_ids = {song.get('id') for song in all_songs if 'id' in song}
-                                    for song in json_data['songs']['data']:
-                                        if 'id' in song and song['id'] not in existing_ids:
-                                            all_songs.append(song)
-                                            existing_ids.add(song['id'])
-                                    break
-                            except:
-                                continue
-        except requests.exceptions.Timeout:
-            print("Scraping fallback timed out")
-        except Exception as e:
-            print(f"Scraping error: {e}")
-    
-    # Limit results
-    all_songs = all_songs[:limit]
-    
-    # Step 3: Get full song data if requested
-    if not songdata:
-        return all_songs
-    
-    # Use a more efficient approach for getting song details
-    songs_with_data = []
-    
-    # Optional: Use a ThreadPoolExecutor for parallel requests
+    import requests
+    import json
     from concurrent.futures import ThreadPoolExecutor, as_completed
     
-    def fetch_song_data(song):
-        try:
-            id = song['id']
-            song_data = get_song(id, lyrics)
-            return song_data if song_data else None
-        except Exception as e:
-            print(f"Error fetching song {song.get('id', 'unknown')}: {e}")
-            return None
+    # Initialize empty result
+    all_songs = []
     
-    # Use ThreadPoolExecutor to fetch song data in parallel
-    with ThreadPoolExecutor(max_workers=min(10, len(all_songs))) as executor:
-        future_to_song = {executor.submit(fetch_song_data, song): song for song in all_songs}
-        for future in as_completed(future_to_song):
-            result = future.result()
-            if result:
-                songs_with_data.append(result)
-    
-    return songs_with_data
+    try:
+        # Handle direct URLs
+        if query and isinstance(query, str) and query.startswith('http') and 'saavn.com' in query:
+            id = get_song_id(query)
+            try:
+                song_data = get_song(id, lyrics)
+                if song_data:
+                    return [song_data]
+                return []
+            except Exception as e:
+                print(f"Error getting song by ID: {e}")
+                return []
+        
+        # Define request headers once
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': '*/*',
+            'Referer': 'https://www.jiosaavn.com/',
+        }
+        
+        # Ensure query is valid
+        if not query or not isinstance(query, str) or len(query.strip()) == 0:
+            print("Invalid or empty query")
+            return []
+            
+        # Format query for URL safely
+        from urllib.parse import quote
+        query_encoded = quote(query.strip())
+        
+        # Step 1: Try the direct API with proper error handling and timeouts
+        search_urls = [
+            f"https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&q={query_encoded}&n={limit}",
+            f"https://www.jiosaavn.com/api.php?__call=search.getAll&_format=json&_marker=0&cc=in&q={query_encoded}&n={limit}"
+        ]
+        
+        for url in search_urls:
+            if len(all_songs) >= limit:
+                break
+                
+            try:
+                response = requests.get(url, headers=headers, timeout=timeout)
+                if response.status_code != 200:
+                    continue
+                    
+                response_text = response.text.encode().decode('unicode-escape')
+                response_json = json.loads(response_text)
+                
+                # Extract songs from different possible response formats
+                song_data = None
+                if 'results' in response_json:
+                    song_data = response_json['results']
+                elif 'songs' in response_json and 'data' in response_json['songs']:
+                    song_data = response_json['songs']['data']
+                
+                if song_data and isinstance(song_data, list):
+                    # Add songs, avoiding duplicates
+                    existing_ids = {song.get('id') for song in all_songs if isinstance(song, dict) and 'id' in song}
+                    for song in song_data:
+                        if isinstance(song, dict) and 'id' in song and song['id'] not in existing_ids:
+                            all_songs.append(song)
+                            existing_ids.add(song['id'])
+            except requests.exceptions.Timeout:
+                print(f"Timeout on URL: {url}")
+                continue
+            except Exception as e:
+                print(f"Error on URL {url}: {e}")
+                continue
+        
+        # Step 2: If we don't have enough results, try web scraping as fallback
+        if len(all_songs) < min(5, limit):
+            try:
+                import re
+                from bs4 import BeautifulSoup
+                
+                formatted_query = query.replace(' ', '+')
+                search_url = f"https://www.jiosaavn.com/search/{formatted_query}/songs"
+                
+                scrape_headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                }
+                
+                response = requests.get(search_url, headers=scrape_headers, timeout=timeout)
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    script_tags = soup.find_all('script')
+                    for script in script_tags:
+                        if script.string and 'window.__INITIAL_DATA__' in script.string:
+                            json_str = re.search(r'window\.__INITIAL_DATA__\s*=\s*({.*?});', script.string, re.DOTALL)
+                            if json_str:
+                                try:
+                                    json_data = json.loads(json_str.group(1))
+                                    if 'songs' in json_data and 'data' in json_data['songs']:
+                                        # Add these songs, respecting the existing_ids set
+                                        existing_ids = {song.get('id') for song in all_songs if isinstance(song, dict) and 'id' in song}
+                                        for song in json_data['songs']['data']:
+                                            if isinstance(song, dict) and 'id' in song and song['id'] not in existing_ids:
+                                                all_songs.append(song)
+                                                existing_ids.add(song['id'])
+                                        break
+                                except:
+                                    continue
+            except requests.exceptions.Timeout:
+                print("Scraping fallback timed out")
+            except Exception as e:
+                print(f"Scraping error: {e}")
+        
+        # Limit results and ensure we have valid data
+        all_songs = all_songs[:limit] if all_songs else []
+        
+        # If we don't need song data, return what we have
+        if not songdata:
+            return all_songs
+        
+        # No need to process further if there are no songs
+        if not all_songs:
+            return []
+        
+        # Step 3: Get full song data if requested
+        songs_with_data = []
+        
+        def fetch_song_data(song):
+            try:
+                if not isinstance(song, dict) or 'id' not in song:
+                    return None
+                    
+                id = song['id']
+                song_data = get_song(id, lyrics)
+                return song_data if song_data else None
+            except Exception as e:
+                print(f"Error fetching song {song.get('id', 'unknown')}: {e}")
+                return None
+        
+        # CRITICAL FIX: Ensure max_workers is always at least 1
+        max_workers = max(1, min(10, len(all_songs)))
+        
+        # Use ThreadPoolExecutor to fetch song data in parallel
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_song = {executor.submit(fetch_song_data, song): song for song in all_songs}
+            for future in as_completed(future_to_song):
+                result = future.result()
+                if result:
+                    songs_with_data.append(result)
+        
+        return songs_with_data
+        
+    except Exception as e:
+        # Catch-all exception handler to prevent API crashes
+        print(f"Unexpected error in search_for_song: {e}")
+        return []
 def get_song(id, lyrics):
     try:
         song_details_base_url = endpoints.song_details_base_url+id
