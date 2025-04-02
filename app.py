@@ -708,97 +708,43 @@ def decrypt_url(encrypted_url):
         return ""
 @app.route('/result/')
 def result():
+    lyrics = False
+    query = request.args.get('query')
+    lyrics_ = request.args.get('lyrics')
+    if lyrics_ and lyrics_.lower() != 'false':
+        lyrics = True
+
+    if 'saavn' not in query:
+        return jsonify(jiosaavn.search_for_song(query, lyrics, True))
     try:
-        lyrics = False
-        query = request.args.get('query', '')
-        lyrics_ = request.args.get('lyrics', 'false')
-        
-        # Pagination parameters
-        page = request.args.get('page', 1)
-        per_page = request.args.get('per_page', 40)
-        
-        # Validate and convert parameters to correct types
-        try:
-            page = int(page)
-            per_page = int(per_page)
-            
-            # Ensure reasonable values
-            page = max(1, page)
-            per_page = max(1, min(100, per_page))  # Limit to reasonable range
-        except ValueError:
-            page = 1
-            per_page = 40
-        
-        if lyrics_ and str(lyrics_).lower() != 'false':
-            lyrics = True
-            
-        # Early validation of query
-        if not query or not isinstance(query, str) or len(query.strip()) == 0:
-            return jsonify({
-                "status": "error", 
-                "message": "No query provided"
-            })
-            
-        # Handle timeouts more effectively
-        try:
-            fetch_limit = per_page * 2  # Get a bit more than needed
-            
-            # Wrap the call in a try-except block specifically for timeout
-            results = jiosaavn.search_for_song(
-                query, 
-                lyrics, 
-                True, 
-                limit=fetch_limit,
-                timeout=8  # Slightly longer timeout for API calls
-            )
-            
-            # Guard against None results
-            if results is None:
-                results = []
-                
-            # Calculate pagination
-            total_items = len(results)
-            total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 1
-            
-            # Calculate slice indices
-            start_idx = (page - 1) * per_page
-            end_idx = min(start_idx + per_page, total_items)
-            
-            # Get page of results safely
-            if start_idx >= total_items:
-                paginated_results = []
-            else:
-                paginated_results = results[start_idx:end_idx]
-            
-            response = {
-                "status": "success",
-                "results": paginated_results,
-                "pagination": {
-                    "page": page,
-                    "per_page": per_page,
-                    "total": total_items,
-                    "pages": total_pages,
-                    "has_more": end_idx < total_items
-                }
-            }
-            
-            return jsonify(response)
-            
-        except requests.exceptions.Timeout:
-            return jsonify({
-                "status": "error", 
-                "message": "Search timed out. Please try a more specific query."
-            })
-            
+        if '/song/' in query:
+            print("Song")
+            song_id = jiosaavn.get_song_id(query)
+            song = jiosaavn.get_song(song_id, lyrics)
+            return jsonify(song)
+
+        elif '/album/' in query:
+            print("Album")
+            id = jiosaavn.get_album_id(query)
+            songs = jiosaavn.get_album(id, lyrics)
+            return jsonify(songs)
+
+        elif '/playlist/' or '/featured/' in query:
+            print("Playlist")
+            id = jiosaavn.get_playlist_id(query)
+            songs = jiosaavn.get_playlist(id, lyrics)
+            return jsonify(songs)
+
     except Exception as e:
-        # Catch-all handler for any other exceptions
-        import traceback
-        print(f"Error in /result/ endpoint: {str(e)}")
-        print(traceback.format_exc())
-        
-        return jsonify({
-            "status": "error",
-            "message": "An unexpected error occurred. Please try again."
-        })
+        print_exc()
+        error = {
+            "status": True,
+            "error": str(e)
+        }
+        return jsonify(error)
+    return None
+
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5100, debug=True, use_reloader=True, threaded=True)
+    app.debug = True
+    app.run(host='0.0.0.0', port=5100, use_reloader=True, threaded=True)
