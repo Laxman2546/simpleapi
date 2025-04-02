@@ -26,6 +26,7 @@ def search_for_song(query, lyrics, songdata):
             songs.append(song_data)
     return songs
 
+
 def get_song(id, lyrics):
     try:
         song_details_base_url = endpoints.song_details_base_url+id
