@@ -832,15 +832,13 @@ def result():
         page = request.args.get('page', 1)
         per_page = request.args.get('per_page', 40)
         
-        # Debug logging for Vercel environment
-        print(f"Processing query: '{query}', lyrics: {lyrics_}, page: {page}, per_page: {per_page}")
+        # Debug logging
+        print(f"API Request - Query: '{query}', lyrics: {lyrics_}")
         
-        # Validate and convert parameters to correct types
+        # Validate parameters
         try:
             page = int(page)
             per_page = int(per_page)
-            
-            # Ensure reasonable values
             page = max(1, page)
             per_page = max(1, min(100, per_page))
         except ValueError:
@@ -850,92 +848,113 @@ def result():
         if lyrics_ and str(lyrics_).lower() != 'false':
             lyrics = True
             
-        # Early validation of query
         if not query or not isinstance(query, str) or len(query.strip()) == 0:
             return jsonify({
                 "status": "error", 
                 "message": "No query provided"
             })
         
-        # Try different request methods to handle Vercel environment
+        # Enhanced search implementation
         try:
-            # First attempt - standard method with extended timeout
+            # Use specific headers to mimic browser requests
+            import requests
+            import json
+            from urllib.parse import quote
+            
+            query_encoded = quote(query.strip())
             fetch_limit = per_page * 2
             
-            # Add debug info before the search call
-            print(f"Attempting search with timeout=10 for query: '{query}'")
+            # Try multiple search endpoints with good browser-like headers
+            search_urls = [
+                f"https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&q={query_encoded}&n={fetch_limit}",
+                f"https://www.jiosaavn.com/api.php?__call=search.getAll&_format=json&_marker=0&cc=in&q={query_encoded}&n={fetch_limit}"
+            ]
             
-            # Increase timeout for Vercel environment
-            results = jiosaavn.search_for_song(
-                query, 
-                lyrics, 
-                True, 
-                limit=fetch_limit,
-                timeout=10  # Longer timeout for Vercel
-            )
+            all_results = []
             
-            # Debug the results
-            print(f"Search results count: {len(results) if results else 0}")
-            
-            # If results are empty, try fallback method
-            if not results or len(results) == 0:
-                print("Primary search returned no results, trying fallback method")
-                
-                # Import required libraries here to ensure they're available
-                import requests
-                import json
-                from urllib.parse import quote
-                
-                # Direct API call as fallback
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Accept': '*/*',
-                    'Referer': 'https://www.jiosaavn.com/',
-                    'Origin': 'https://www.jiosaavn.com',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                }
-                
-                query_encoded = quote(query.strip())
-                fallback_url = f"https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&q={query_encoded}&n={fetch_limit}"
-                
-                print(f"Trying fallback URL: {fallback_url}")
-                
-                response = requests.get(fallback_url, headers=headers, timeout=10)
-                if response.status_code == 200:
-                    response_text = response.text.encode().decode('unicode-escape')
-                    response_json = json.loads(response_text)
+            for url in search_urls:
+                try:
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                        'Accept': '*/*',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Origin': 'https://www.jiosaavn.com',
+                        'Referer': 'https://www.jiosaavn.com/',
+                        'sec-ch-ua': '"Google Chrome";v="91", "Chromium";v="91"',
+                        'sec-ch-ua-mobile': '?0',
+                        'sec-fetch-dest': 'empty',
+                        'sec-fetch-mode': 'cors',
+                        'sec-fetch-site': 'same-origin'
+                    }
                     
-                    if 'results' in response_json and response_json['results']:
-                        # Use helper function to format songs if available
-                        # This assumes helper is a module with format_song function
+                    response = requests.get(url, headers=headers, timeout=8)
+                    print(f"API URL: {url} - Status: {response.status_code}")
+                    
+                    if response.status_code == 200:
                         try:
-                            import helper
-                            results = [helper.format_song(song, lyrics) for song in response_json['results'] if song]
-                            results = [song for song in results if song]  # Filter out None values
-                        except ImportError:
-                            # Simplified fallback if helper isn't available
-                            results = response_json['results']
-                        
-                        print(f"Fallback search returned {len(results)} results")
+                            response_text = response.text.encode().decode('unicode-escape')
+                            response_json = json.loads(response_text)
+                            
+                            # Extract songs from different response formats
+                            songs = None
+                            if 'results' in response_json and response_json['results']:
+                                songs = response_json['results']
+                            elif 'songs' in response_json and 'data' in response_json['songs']:
+                                songs = response_json['songs']['data']
+                            
+                            if songs and isinstance(songs, list):
+                                # Process songs to match your format
+                                for song in songs:
+                                    # Skip songs that are disabled or Pro only if possible
+                                    if song.get('disabled') == 'true' and 'disabled_text' in song:
+                                        continue
+                                    
+                                    # Format song using your helper or add it directly
+                                    try:
+                                        import helper
+                                        formatted_song = helper.format_song(song, lyrics)
+                                        if formatted_song:
+                                            all_results.append(formatted_song)
+                                    except (ImportError, Exception) as e:
+                                        # If helper isn't available or fails, use the raw song data
+                                        all_results.append(song)
+                        except Exception as e:
+                            print(f"Error processing response: {str(e)}")
+                except Exception as e:
+                    print(f"Error fetching URL {url}: {str(e)}")
             
-            # Guard against None results
-            if results is None:
-                results = []
-                
-            # Calculate pagination
-            total_items = len(results)
+            # If we still don't have results, try using jiosaavn module as fallback
+            if not all_results:
+                print("Trying jiosaavn module as fallback")
+                try:
+                    results = jiosaavn.search_for_song(query, lyrics, True, limit=fetch_limit, timeout=8)
+                    if results and isinstance(results, list):
+                        all_results = results
+                except Exception as e:
+                    print(f"Fallback search error: {str(e)}")
+            
+            # Remove duplicates by song ID
+            unique_results = []
+            seen_ids = set()
+            
+            for song in all_results:
+                if isinstance(song, dict) and 'id' in song:
+                    if song['id'] not in seen_ids:
+                        seen_ids.add(song['id'])
+                        unique_results.append(song)
+            
+            # Pagination logic
+            total_items = len(unique_results)
             total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 1
             
-            # Calculate slice indices
             start_idx = (page - 1) * per_page
             end_idx = min(start_idx + per_page, total_items)
             
-            # Get page of results safely
-            if start_idx >= total_items:
-                paginated_results = []
-            else:
-                paginated_results = results[start_idx:end_idx]
+            paginated_results = []
+            if start_idx < total_items:
+                paginated_results = unique_results[start_idx:end_idx]
             
+            # Return consistent response format
             response = {
                 "status": "success",
                 "results": paginated_results,
@@ -950,35 +969,18 @@ def result():
             
             return jsonify(response)
             
-        except requests.exceptions.Timeout:
-            print("Request timed out")
-            return jsonify({
-                "status": "error", 
-                "message": "Search timed out. Please try a more specific query."
-            })
         except Exception as e:
-            print(f"Error during search: {str(e)}")
+            print(f"Search error: {str(e)}")
             return jsonify({
                 "status": "error",
-                "message": f"An error occurred during search: {str(e)}"
+                "message": f"Search failed: {str(e)}"
             })
             
     except Exception as e:
-        print(f"Unexpected error in result route: {str(e)}")
+        print(f"Route error: {str(e)}")
         return jsonify({
             "status": "error",
             "message": "An unexpected error occurred"
-        })
-            
-    except Exception as e:
-        # Catch-all handler for any other exceptions
-        import traceback
-        print(f"Error in /result/ endpoint: {str(e)}")
-        print(traceback.format_exc())
-        
-        return jsonify({
-            "status": "error",
-            "message": "An unexpected error occurred. Please try again."
         })
 
 
