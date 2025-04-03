@@ -854,7 +854,7 @@ def result():
                 "message": "No query provided"
             })
         
-        # Enhanced search implementation
+        # Enhanced search implementation with just one endpoint
         try:
             # Use specific headers to mimic browser requests
             import requests
@@ -864,64 +864,52 @@ def result():
             query_encoded = quote(query.strip())
             fetch_limit = per_page * 2
             
-            # Try multiple search endpoints with good browser-like headers
-            search_urls = [
-                f"https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&q={query_encoded}&n={fetch_limit}",
-                f"https://www.jiosaavn.com/api.php?__call=search.getAll&_format=json&_marker=0&cc=in&q={query_encoded}&n={fetch_limit}"
-            ]
+            # Use only the primary search endpoint
+            search_url = f"https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&q={query_encoded}&n={fetch_limit}"
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': '*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Origin': 'https://www.jiosaavn.com',
+                'Referer': 'https://www.jiosaavn.com/',
+                'Connection': 'keep-alive'
+            }
+            
+            print(f"Sending request to: {search_url}")
+            response = requests.get(search_url, headers=headers, timeout=8)
+            print(f"Response status: {response.status_code}")
             
             all_results = []
             
-            for url in search_urls:
+            if response.status_code == 200:
                 try:
-                    headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                        'Accept': '*/*',
-                        'Accept-Language': 'en-US,en;q=0.9',
-                        'Origin': 'https://www.jiosaavn.com',
-                        'Referer': 'https://www.jiosaavn.com/',
-                        'sec-ch-ua': '"Google Chrome";v="91", "Chromium";v="91"',
-                        'sec-ch-ua-mobile': '?0',
-                        'sec-fetch-dest': 'empty',
-                        'sec-fetch-mode': 'cors',
-                        'sec-fetch-site': 'same-origin'
-                    }
+                    response_text = response.text.encode().decode('unicode-escape')
+                    response_json = json.loads(response_text)
                     
-                    response = requests.get(url, headers=headers, timeout=8)
-                    print(f"API URL: {url} - Status: {response.status_code}")
-                    
-                    if response.status_code == 200:
-                        try:
-                            response_text = response.text.encode().decode('unicode-escape')
-                            response_json = json.loads(response_text)
+                    # Extract songs from response
+                    if 'results' in response_json and response_json['results']:
+                        songs = response_json['results']
+                        
+                        # Process songs to match your format
+                        for song in songs:
+                            # Skip disabled songs if you want
+                            # if song.get('disabled') == 'true':
+                            #    continue
                             
-                            # Extract songs from different response formats
-                            songs = None
-                            if 'results' in response_json and response_json['results']:
-                                songs = response_json['results']
-                            elif 'songs' in response_json and 'data' in response_json['songs']:
-                                songs = response_json['songs']['data']
-                            
-                            if songs and isinstance(songs, list):
-                                # Process songs to match your format
-                                for song in songs:
-                                    # Skip songs that are disabled or Pro only if possible
-                                    if song.get('disabled') == 'true' and 'disabled_text' in song:
-                                        continue
-                                    
-                                    # Format song using your helper or add it directly
-                                    try:
-                                        import helper
-                                        formatted_song = helper.format_song(song, lyrics)
-                                        if formatted_song:
-                                            all_results.append(formatted_song)
-                                    except (ImportError, Exception) as e:
-                                        # If helper isn't available or fails, use the raw song data
-                                        all_results.append(song)
-                        except Exception as e:
-                            print(f"Error processing response: {str(e)}")
+                            # Format song using your helper or add it directly
+                            try:
+                                import helper
+                                formatted_song = helper.format_song(song, lyrics)
+                                if formatted_song:
+                                    all_results.append(formatted_song)
+                            except (ImportError, Exception) as e:
+                                # If helper isn't available or fails, use the raw song data
+                                all_results.append(song)
+                                
+                        print(f"Found {len(all_results)} songs")
                 except Exception as e:
-                    print(f"Error fetching URL {url}: {str(e)}")
+                    print(f"Error processing response: {str(e)}")
             
             # If we still don't have results, try using jiosaavn module as fallback
             if not all_results:
@@ -933,18 +921,8 @@ def result():
                 except Exception as e:
                     print(f"Fallback search error: {str(e)}")
             
-            # Remove duplicates by song ID
-            unique_results = []
-            seen_ids = set()
-            
-            for song in all_results:
-                if isinstance(song, dict) and 'id' in song:
-                    if song['id'] not in seen_ids:
-                        seen_ids.add(song['id'])
-                        unique_results.append(song)
-            
             # Pagination logic
-            total_items = len(unique_results)
+            total_items = len(all_results)
             total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 1
             
             start_idx = (page - 1) * per_page
@@ -952,7 +930,7 @@ def result():
             
             paginated_results = []
             if start_idx < total_items:
-                paginated_results = unique_results[start_idx:end_idx]
+                paginated_results = all_results[start_idx:end_idx]
             
             # Return consistent response format
             response = {
@@ -969,6 +947,11 @@ def result():
             
             return jsonify(response)
             
+        except requests.exceptions.Timeout:
+            return jsonify({
+                "status": "error", 
+                "message": "Search timed out. Please try a more specific query."
+            })
         except Exception as e:
             print(f"Search error: {str(e)}")
             return jsonify({

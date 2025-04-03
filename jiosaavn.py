@@ -48,8 +48,8 @@ def search_for_song(query, lyrics, songdata, limit=50, timeout=3):
         
         # Step 1: Try the direct API with proper error handling and timeouts
         search_urls = [
-            f"https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&q={query_encoded}&n={limit}",
-            f"https://www.jiosaavn.com/api.php?__call=search.getAll&_format=json&_marker=0&cc=in&q={query_encoded}&n={limit}"
+            f"https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&q={query_encoded}&n={limit}"
+           
         ]
         
         for url in search_urls:
