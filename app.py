@@ -550,22 +550,105 @@ def get_song():
 
 @app.route('/playlist/')
 def playlist():
-    lyrics = False
-    query = request.args.get('query')
-    lyrics_ = request.args.get('lyrics')
-    if lyrics_ and lyrics_.lower() != 'false':
-        lyrics = True
-    if query:
-        id = jiosaavn.get_playlist_id(query)
-        songs = jiosaavn.get_playlist(id, lyrics)
-        return jsonify(songs)
-    else:
-        error = {
-            "status": False,
-            "error": 'Query is required to search playlists!'
-        }
-        return jsonify(error)
+    try:
+        # Get parameters
+        query = request.args.get('query')
+        lyrics = request.args.get('lyrics', 'false').lower() == 'true'
+        
+        if not query:
+            return jsonify({
+                "status": False,
+                "error": "Query parameter is required"
+            }), 400
 
+        # Extract playlist ID
+        playlist_id = jiosaavn.get_playlist_id(query)
+        if not playlist_id:
+            return jsonify({
+                "status": False,
+                "error": "Invalid playlist URL or ID"
+            }), 400
+
+        # Prepare headers to mimic browser request
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json',
+            'Referer': 'https://www.jiosaavn.com/',
+            'Origin': 'https://www.jiosaavn.com'
+        }
+
+        # Step 1: Get playlist metadata
+        playlist_url = f"https://www.jiosaavn.com/api.php?_format=json&__call=playlist.getDetails&listid={playlist_id}"
+        
+        try:
+            # First attempt with direct API call
+            response = requests.get(playlist_url, headers=headers, timeout=8)
+            response.raise_for_status()
+            
+            # Handle JSONP response if needed
+            data = response.text
+            if not data.strip().startswith('{'):
+                data = data[data.find('{'):data.rfind('}')+1]
+            
+            playlist_data = json.loads(data)
+            
+            # Step 2: Ensure songs are populated
+            if not playlist_data.get('songs') and playlist_data.get('content_list'):
+                songs = []
+                content_ids = playlist_data['content_list']
+                
+                # Fetch songs in batches to avoid Vercel timeout
+                batch_size = 5  # Reduced for Vercel's limits
+                for i in range(0, len(content_ids), batch_size):
+                    batch = content_ids[i:i + batch_size]
+                    song_details = get_song_details_batch(batch, headers)
+                    songs.extend(song_details)
+                
+                playlist_data['songs'] = songs
+            
+            return jsonify(playlist_data)
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Direct API failed, falling back to jiosaavn module: {str(e)}")
+            
+            # Fallback to jiosaavn module
+            songs = jiosaavn.get_playlist(playlist_id, lyrics)
+            if songs:
+                return jsonify(songs)
+            
+            return jsonify({
+                "status": False,
+                "error": "Failed to fetch playlist",
+                "details": str(e)
+            }), 500
+            
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        return jsonify({
+            "status": False,
+            "error": "Internal server error",
+            "details": str(e)
+        }), 500
+
+def get_song_details_batch(song_ids, headers):
+    """Fetch multiple song details in a single request"""
+    try:
+        song_ids_param = ','.join(song_ids)
+        url = f"https://www.jiosaavn.com/api.php?_format=json&__call=song.getDetails&pids={song_ids_param}"
+        
+        response = requests.get(url, headers=headers, timeout=5)
+        response.raise_for_status()
+        
+        data = response.text
+        if not data.strip().startswith('{'):
+            data = data[data.find('{'):data.rfind('}')+1]
+        
+        song_data = json.loads(data)
+        return [song_data.get(sid) for sid in song_ids if song_data.get(sid)]
+        
+    except Exception as e:
+        print(f"Failed to fetch song batch: {str(e)}")
+        return []
 @app.route('/album/')
 def album():
     lyrics = False
@@ -854,7 +937,7 @@ def result():
                 "message": "No query provided"
             })
         
-        # Enhanced search implementation with just one endpoint
+        # Enhanced search implementation
         try:
             # Use specific headers to mimic browser requests
             import requests
@@ -864,52 +947,64 @@ def result():
             query_encoded = quote(query.strip())
             fetch_limit = per_page * 2
             
-            # Use only the primary search endpoint
-            search_url = f"https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&q={query_encoded}&n={fetch_limit}"
-            
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': '*/*',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Origin': 'https://www.jiosaavn.com',
-                'Referer': 'https://www.jiosaavn.com/',
-                'Connection': 'keep-alive'
-            }
-            
-            print(f"Sending request to: {search_url}")
-            response = requests.get(search_url, headers=headers, timeout=8)
-            print(f"Response status: {response.status_code}")
+            # Try multiple search endpoints with good browser-like headers
+            search_urls = [
+                f"https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&q={query_encoded}&n={fetch_limit}",
+                f"https://www.jiosaavn.com/api.php?__call=search.getAll&_format=json&_marker=0&cc=in&q={query_encoded}&n={fetch_limit}"
+            ]
             
             all_results = []
             
-            if response.status_code == 200:
+            for url in search_urls:
                 try:
-                    response_text = response.text.encode().decode('unicode-escape')
-                    response_json = json.loads(response_text)
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                        'Accept': '*/*',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Origin': 'https://www.jiosaavn.com',
+                        'Referer': 'https://www.jiosaavn.com/',
+                        'sec-ch-ua': '"Google Chrome";v="91", "Chromium";v="91"',
+                        'sec-ch-ua-mobile': '?0',
+                        'sec-fetch-dest': 'empty',
+                        'sec-fetch-mode': 'cors',
+                        'sec-fetch-site': 'same-origin'
+                    }
                     
-                    # Extract songs from response
-                    if 'results' in response_json and response_json['results']:
-                        songs = response_json['results']
-                        
-                        # Process songs to match your format
-                        for song in songs:
-                            # Skip disabled songs if you want
-                            # if song.get('disabled') == 'true':
-                            #    continue
+                    response = requests.get(url, headers=headers, timeout=8)
+                    print(f"API URL: {url} - Status: {response.status_code}")
+                    
+                    if response.status_code == 200:
+                        try:
+                            response_text = response.text.encode().decode('unicode-escape')
+                            response_json = json.loads(response_text)
                             
-                            # Format song using your helper or add it directly
-                            try:
-                                import helper
-                                formatted_song = helper.format_song(song, lyrics)
-                                if formatted_song:
-                                    all_results.append(formatted_song)
-                            except (ImportError, Exception) as e:
-                                # If helper isn't available or fails, use the raw song data
-                                all_results.append(song)
-                                
-                        print(f"Found {len(all_results)} songs")
+                            # Extract songs from different response formats
+                            songs = None
+                            if 'results' in response_json and response_json['results']:
+                                songs = response_json['results']
+                            elif 'songs' in response_json and 'data' in response_json['songs']:
+                                songs = response_json['songs']['data']
+                            
+                            if songs and isinstance(songs, list):
+                                # Process songs to match your format
+                                for song in songs:
+                                    # Skip songs that are disabled or Pro only if possible
+                                    if song.get('disabled') == 'true' and 'disabled_text' in song:
+                                        continue
+                                    
+                                    # Format song using your helper or add it directly
+                                    try:
+                                        import helper
+                                        formatted_song = helper.format_song(song, lyrics)
+                                        if formatted_song:
+                                            all_results.append(formatted_song)
+                                    except (ImportError, Exception) as e:
+                                        # If helper isn't available or fails, use the raw song data
+                                        all_results.append(song)
+                        except Exception as e:
+                            print(f"Error processing response: {str(e)}")
                 except Exception as e:
-                    print(f"Error processing response: {str(e)}")
+                    print(f"Error fetching URL {url}: {str(e)}")
             
             # If we still don't have results, try using jiosaavn module as fallback
             if not all_results:
@@ -921,8 +1016,18 @@ def result():
                 except Exception as e:
                     print(f"Fallback search error: {str(e)}")
             
+            # Remove duplicates by song ID
+            unique_results = []
+            seen_ids = set()
+            
+            for song in all_results:
+                if isinstance(song, dict) and 'id' in song:
+                    if song['id'] not in seen_ids:
+                        seen_ids.add(song['id'])
+                        unique_results.append(song)
+            
             # Pagination logic
-            total_items = len(all_results)
+            total_items = len(unique_results)
             total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 1
             
             start_idx = (page - 1) * per_page
@@ -930,7 +1035,7 @@ def result():
             
             paginated_results = []
             if start_idx < total_items:
-                paginated_results = all_results[start_idx:end_idx]
+                paginated_results = unique_results[start_idx:end_idx]
             
             # Return consistent response format
             response = {
@@ -947,11 +1052,6 @@ def result():
             
             return jsonify(response)
             
-        except requests.exceptions.Timeout:
-            return jsonify({
-                "status": "error", 
-                "message": "Search timed out. Please try a more specific query."
-            })
         except Exception as e:
             print(f"Search error: {str(e)}")
             return jsonify({

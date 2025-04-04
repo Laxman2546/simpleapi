@@ -6,7 +6,7 @@ from traceback import print_exc
 import re
 
 
-def search_for_song(query, lyrics, songdata, limit=50, timeout=3):
+def search_for_song(query, lyrics, songdata, limit=50, timeout=8):
     """
     Parse JioSaavn website search results with improved error handling for API use
     """
