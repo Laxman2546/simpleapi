@@ -6,25 +6,14 @@
       "src": "app.py",
       "use": "@vercel/python",
       "config": {
-        "maxLambdaSize": "15mb",
-        "runtime": "python3.9",
-        "includeFiles": "*.py,requirements.txt"
+        "maxLambdaSize": "15mb"
       }
     }
   ],
   "routes": [
     {
-      "src": "/playlist/?.*",
-      "dest": "/playlist/",
-      "methods": ["GET"]
-    },
-    {
       "src": "/(.*)",
       "dest": "app.py"
     }
-  ],
-  "env": {
-    "PYTHONUNBUFFERED": "true",
-    "NODE_ENV": "production"
-  }
+  ]
 }
